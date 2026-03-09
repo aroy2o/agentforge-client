@@ -1,0 +1,58 @@
+export const TOOLS = [
+  {
+    id: 'web_search',
+    name: 'Web Search',
+    icon: '⚡',
+    color: '#00d4ff',
+    description: 'Search the internet for current real-world information',
+  },
+  {
+    id: 'summarizer',
+    name: 'Summarizer',
+    icon: '◈',
+    color: '#a78bfa',
+    description: 'Condense and distill content into key points',
+  },
+  {
+    id: 'calculator',
+    name: 'Calculator',
+    icon: '∑',
+    color: '#f59e0b',
+    description: 'Perform mathematical calculations accurately',
+  },
+  {
+    id: 'email_draft',
+    name: 'Email Drafter',
+    icon: '✉',
+    color: '#34d399',
+    description: 'Compose professional well-structured emails',
+  },
+  {
+    id: 'todo',
+    name: 'To-Do Manager',
+    icon: '▣',
+    color: '#f472b6',
+    description: 'Extract actionable tasks and create organized lists',
+  },
+  {
+    id: 'scheduler',
+    name: 'Scheduler',
+    icon: '⏰',
+    color: '#f97316',
+    description: 'Schedules automated tasks and recurring jobs',
+  },
+  {
+    id: 'news_fetch',
+    name: 'News Fetcher',
+    icon: '📰',
+    color: '#06b6d4',
+    description: 'Fetches latest news headlines on any topic',
+  },
+  {
+    id: 'weather',
+    name: 'Weather',
+    icon: '🌤',
+    color: '#3b82f6',
+    description: 'Gets current weather and forecasts for any location',
+  },
+];
