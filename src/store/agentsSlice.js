@@ -6,6 +6,7 @@ const agentsSlice = createSlice({
     name: 'agents',
     initialState: {
         agents: defaultAgents,
+        hydrated: false,
         selectedAgent: null,
         isEditing: false,
     },
@@ -55,6 +56,9 @@ const agentsSlice = createSlice({
                 return true;
             });
         },
+        setAgentsHydrated(state, action) {
+            state.hydrated = action.payload;
+        },
     },
 });
 
@@ -66,6 +70,7 @@ export const {
     setIsEditing,
     updateAgentMemory,
     setAgents,
+    setAgentsHydrated,
 } = agentsSlice.actions;
 
 export default agentsSlice.reducer;

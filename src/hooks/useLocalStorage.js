@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
-import { setAgents } from '../store/agentsSlice';
+import { setAgents, setAgentsHydrated } from '../store/agentsSlice';
 import { reorderPipeline } from '../store/pipelineSlice';
 import { addCompletedTask } from '../store/taskSlice';
 import { defaultAgents } from '../constants/defaultAgents';
 import api from '../services/api';
 
-const AGENT_VERSION = "v2.0";
+const AGENT_VERSION = "v2.1";
 
 export function useLocalStorage() {
   const dispatch = useAppDispatch();
@@ -16,8 +16,15 @@ export function useLocalStorage() {
 
   const hasInitialized = useRef(false);
   const lastSyncedAgents = useRef(null);
+  const lastSyncedPipeline = useRef(null);
   const agentSyncTimer = useRef(null);
   const pipelineSyncTimer = useRef(null);
+
+  const samePipeline = (a = [], b = []) => {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    return a.every((id, idx) => id === b[idx]);
+  };
 
   // ── On mount: load from localStorage as instant cache ──────────────────────
   useEffect(() => {
@@ -45,7 +52,10 @@ export function useLocalStorage() {
     if (savedPipeline) {
       try {
         const parsed = JSON.parse(savedPipeline);
-        if (Array.isArray(parsed)) dispatch(reorderPipeline(parsed));
+        if (Array.isArray(parsed)) {
+          dispatch(reorderPipeline(parsed));
+          lastSyncedPipeline.current = parsed;
+        }
       } catch (err) {
         console.error('Failed to parse pipeline from localStorage', err);
       }
@@ -64,8 +74,8 @@ export function useLocalStorage() {
         const dbAgents = agentsRes.data.agents;
 
         if (dbAgents && dbAgents.length > 0) {
-          const VALID_DEFAULT_IDS = ['agent-scout', 'agent-quill', 'agent-sage', 'agent-atlas', 'agent-max'];
-          const VALID_DEFAULT_NAMES = ['Scout', 'Quill', 'Sage', 'Atlas', 'Max'];
+          const VALID_DEFAULT_IDS = ['agent-forge', 'agent-scout', 'agent-quill', 'agent-sage', 'agent-atlas', 'agent-lens', 'agent-hermes'];
+          const VALID_DEFAULT_NAMES = ['Forge', 'Scout', 'Quill', 'Sage', 'Atlas', 'Lens', 'Hermes'];
 
           const validAgents = dbAgents.filter(a =>
             VALID_DEFAULT_IDS.includes(a.id || a._id) ||
@@ -88,6 +98,13 @@ export function useLocalStorage() {
           }
 
           // Normalize: use _id as id for Redux compatibility
+          for (const defaultAgent of defaultAgents) {
+            const key = defaultAgent.name.toLowerCase();
+            if (!nameMap.has(key)) {
+              nameMap.set(key, defaultAgent);
+            }
+          }
+
           const normalized = Array.from(nameMap.values()).map(a => ({
             ...a,
             id: a._id || a.id,
@@ -98,12 +115,15 @@ export function useLocalStorage() {
           localStorage.setItem('agentforge_agents', JSON.stringify(normalized));
         }
 
+        dispatch(setAgentsHydrated(true));
+
         // 2. Fetch pipeline
         const pipelineRes = await api.get('/api/user/pipeline');
         const dbPipeline = pipelineRes.data.pipeline?.agentOrder;
         if (dbPipeline && dbPipeline.length > 0) {
           dispatch(reorderPipeline(dbPipeline));
           localStorage.setItem('agentforge_pipeline', JSON.stringify(dbPipeline));
+          lastSyncedPipeline.current = dbPipeline;
         }
 
         // 3. Fetch completed tasks
@@ -114,6 +134,7 @@ export function useLocalStorage() {
         }
       } catch (err) {
         console.error('[useLocalStorage] DB init failed:', err.message);
+        dispatch(setAgentsHydrated(true));
       }
     };
 
@@ -142,6 +163,7 @@ export function useLocalStorage() {
           await Promise.all(newAgents.map(a =>
             api.post('/api/user/agents', {
               name: a.name, role: a.role, personality: a.personality,
+              description: a.description, category: a.category,
               tools: a.tools, color: a.color,
             })
           ));
@@ -158,11 +180,13 @@ export function useLocalStorage() {
     localStorage.setItem('agentforge_pipeline', JSON.stringify(pipeline));
 
     if (!isAuthenticated || !hasInitialized.current) return;
+    if (samePipeline(pipeline, lastSyncedPipeline.current)) return;
 
     clearTimeout(pipelineSyncTimer.current);
     pipelineSyncTimer.current = setTimeout(async () => {
       try {
         await api.put('/api/user/pipeline', { agentOrder: pipeline });
+        lastSyncedPipeline.current = [...pipeline];
       } catch (err) {
         console.error('[useLocalStorage] Pipeline sync failed:', err.message);
       }

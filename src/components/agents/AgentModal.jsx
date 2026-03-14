@@ -26,7 +26,7 @@ export default function AgentModal() {
         if (selectedAgent && isEditing) {
             setEditName(selectedAgent.name);
             setEditRole(selectedAgent.role);
-            setEditPersonality(selectedAgent.personality);
+            setEditPersonality(selectedAgent.personality || '');
             setEditTools([...selectedAgent.tools]);
             setEditColor(selectedAgent.color);
         }
@@ -120,7 +120,7 @@ export default function AgentModal() {
                     {/* Personality Box */}
                     <div className="mb-6">
                         <h3 className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-600 mb-1.5 flex justify-between items-center">
-                            <Translate>Personality</Translate>
+                            <Translate>Instructions</Translate>
                         </h3>
                         {isEditing ? (
                             <textarea
@@ -131,7 +131,7 @@ export default function AgentModal() {
                             />
                         ) : (
                             <div className="bg-secondary border border-subtle rounded-md p-3 text-xs text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap">
-                                <Translate>{selectedAgent.personality}</Translate>
+                                <Translate>{selectedAgent.personality || ''}</Translate>
                             </div>
                         )}
                     </div>

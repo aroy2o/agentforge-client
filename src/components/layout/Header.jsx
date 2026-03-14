@@ -2,12 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { toggleTheme } from '../../store/themeSlice';
-import { logout } from '../../store/authSlice';
-import { Menu, Sun, Moon, LogOut } from 'lucide-react';
+import { logout, toggleCalendarPanel, setCalendarPanelOpen } from '../../store/authSlice';
+import { Menu, Sun, Moon, LogOut, Calendar, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LanguageSelector from './LanguageSelector';
 import Translate from './Translate';
+import CalendarPanel from '../calendar/CalendarPanel';
 import * as authService from '../../services/authService';
+import * as api from '../../services/api';
+import toast from 'react-hot-toast';
 
 export default function Header({ onMenuClick }) {
     const dispatch = useAppDispatch();
@@ -18,6 +21,8 @@ export default function Header({ onMenuClick }) {
     const isTranslating = useAppSelector((state) => state.language.isTranslating);
     const theme = useAppSelector((state) => state.theme?.theme || 'dark');
     const user = useAppSelector((state) => state.auth.user);
+    const googleCalendarConnected = useAppSelector((state) => state.auth.googleCalendarConnected);
+    const calendarPanelOpen = useAppSelector((state) => state.auth.calendarPanelOpen);
 
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const dropdownRef = useRef(null);
@@ -40,8 +45,18 @@ export default function Header({ onMenuClick }) {
 
     const initials = user?.name ? user.name.trim()[0].toUpperCase() : '?';
 
+    const handleConnectCalendar = async () => {
+        try {
+            const url = await api.getGoogleAuthUrl();
+            window.open(url, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+            toast.error('Failed to start Google Calendar connection.');
+        }
+    };
+
     return (
-        <header className="h-[64px] shrink-0 glass-header flex items-center px-4 md:px-6 gap-3 md:gap-6 z-10 relative">
+        <>
+        <header className="h-[64px] shrink-0 glass-header flex items-center px-4 md:px-6 gap-3 md:gap-6 z-50 relative">
             {/* Mobile Menu Button */}
             {onMenuClick && (
                 <button
@@ -126,6 +141,25 @@ export default function Header({ onMenuClick }) {
 
                     <LanguageSelector />
 
+                    {!googleCalendarConnected ? (
+                        <button
+                            onClick={handleConnectCalendar}
+                            className="h-[32px] px-3 flex items-center gap-1.5 glass-button-secondary text-12 font-medium rounded-lg"
+                            title="Connect Google Calendar"
+                        >
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>Connect Calendar</span>
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => dispatch(toggleCalendarPanel())}
+                            className="h-[32px] px-2.5 flex items-center justify-center rounded-lg border border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                            title="Google Calendar Connected"
+                        >
+                            <Calendar className="w-4 h-4" />
+                        </button>
+                    )}
+
                     {/* Theme Toggle */}
                     <button
                         onClick={() => dispatch(toggleTheme())}
@@ -186,6 +220,17 @@ export default function Header({ onMenuClick }) {
                                     <div className="my-1 border-t border-[var(--border-subtle)]" />
 
                                     <button
+                                        onClick={() => {
+                                            setDropdownOpen(false);
+                                            navigate('/settings');
+                                        }}
+                                        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-[var(--glass-bg-hover)] text-[var(--text-secondary)] hover:text-accent-cyan transition-colors"
+                                    >
+                                        <Settings size={14} />
+                                        <span className="text-13">Settings</span>
+                                    </button>
+
+                                    <button
                                         onClick={handleSignOut}
                                         className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-[var(--glass-bg-hover)] text-[var(--text-secondary)] hover:text-[#ef4444] transition-colors"
                                     >
@@ -199,5 +244,11 @@ export default function Header({ onMenuClick }) {
                 )}
             </div>
         </header>
+        <AnimatePresence>
+            {calendarPanelOpen && (
+                <CalendarPanel onClose={() => dispatch(setCalendarPanelOpen(false))} />
+            )}
+        </AnimatePresence>
+        </>
     );
 }

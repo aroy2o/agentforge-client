@@ -4,14 +4,58 @@ const taskSlice = createSlice({
     name: 'task',
     initialState: {
         taskGoal: '',
+        recipientEmail: '',
+        toolAttachments: {
+            attachedPDF: '',
+            attachedImage: '',
+            attachedImageMeta: null,
+            attachedCode: '',
+            codeLanguage: 'javascript',
+            attachedData: '',
+            currencyRequest: null,
+            chartRequest: null,
+        },
+        pipelineResult: null,
+        lastVoiceResult: '',
         isRunning: false,
         activeAgentId: null,
         completedTasks: [],
         rightTab: 'log',
+        lastFailedAtStep: null,
     },
     reducers: {
         setTaskGoal(state, action) {
             state.taskGoal = action.payload;
+        },
+        setRecipientEmail(state, action) {
+            state.recipientEmail = action.payload;
+        },
+        setToolAttachments(state, action) {
+            state.toolAttachments = {
+                ...state.toolAttachments,
+                ...action.payload,
+            };
+        },
+        clearToolAttachments(state) {
+            state.toolAttachments = {
+                attachedPDF: '',
+                attachedImage: '',
+                attachedImageMeta: null,
+                attachedCode: '',
+                codeLanguage: 'javascript',
+                attachedData: '',
+                currencyRequest: null,
+                chartRequest: null,
+            };
+        },
+        setPipelineResult(state, action) {
+            state.pipelineResult = action.payload;
+        },
+        setLastVoiceResult(state, action) {
+            state.lastVoiceResult = String(action.payload || '');
+        },
+        clearPipelineResult(state) {
+            state.pipelineResult = null;
         },
         setIsRunning(state, action) {
             state.isRunning = action.payload;
@@ -35,6 +79,9 @@ const taskSlice = createSlice({
             // Replace completedTasks with fresh DB data (on mount/load)
             state.completedTasks = action.payload;
         },
+        setLastFailedAtStep(state, action) {
+            state.lastFailedAtStep = action.payload; // number or null
+        },
         updateTaskDbId(state, action) {
             // After DB persist, store the MongoDB _id so we can delete from DB later
             const { localId, dbId } = action.payload;
@@ -46,12 +93,19 @@ const taskSlice = createSlice({
 
 export const {
     setTaskGoal,
+    setRecipientEmail,
+    setToolAttachments,
+    clearToolAttachments,
+    setPipelineResult,
+    setLastVoiceResult,
+    clearPipelineResult,
     setIsRunning,
     setActiveAgent,
     setRightTab,
     addCompletedTask,
     removeCompletedTask,
     setCompletedTasks,
+    setLastFailedAtStep,
     updateTaskDbId,
 } = taskSlice.actions;
 

@@ -72,7 +72,7 @@ export default function LanguageSelector() {
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
-                        className="absolute right-0 top-full mt-3 w-40 max-h-80 overflow-y-auto scrollbar-thin glass-card flex flex-col p-2 z-50 shadow-xl"
+                        className="absolute right-0 top-full mt-3 w-40 max-h-80 overflow-y-auto scrollbar-thin glass-card flex flex-col p-2 z-[9999] shadow-xl"
                     >
                         {(supportedLanguages.length > 0 ? [...supportedLanguages.map(l => l.code), 'pa', 'ml', 'or', 'ur', 'as'] : Object.keys(LANGUAGE_DISPLAY)).filter((value, index, self) => self.indexOf(value) === index).map((code) => {
                             const display = LANGUAGE_DISPLAY[code];

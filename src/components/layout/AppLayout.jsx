@@ -2,9 +2,15 @@ import { useState, useCallback, useEffect } from 'react';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import AgentModal from '../agents/AgentModal';
-import VoiceControlPanel from './VoiceControlPanel';
+import VoiceControlPanel from '../voice/VoiceControlPanel';
+import { useVoiceAgent } from '../../hooks/useVoiceAgent';
+import { useAppDispatch, useAppSelector } from '../../store';
+import { setEnabled } from '../../store/voiceSlice';
 
 export default function AppLayout({ children, rightPanel }) {
+    const dispatch = useAppDispatch();
+    const voiceEnabled = useAppSelector((state) => state.voice.isEnabled);
+    const { isSupported, isListening, startConversation, stopConversation } = useVoiceAgent();
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
     const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
     const [rightPanelWidth, setRightPanelWidth] = useState(480);
@@ -33,7 +39,6 @@ export default function AppLayout({ children, rightPanel }) {
         if (isDragging) {
             document.addEventListener('mousemove', handleMouseMove);
             document.addEventListener('mouseup', handleMouseUp);
-            // Add a cursor style to the body to prevent cursor flickering
             document.body.style.cursor = 'col-resize';
         } else {
             document.removeEventListener('mousemove', handleMouseMove);
@@ -47,6 +52,37 @@ export default function AppLayout({ children, rightPanel }) {
             document.body.style.cursor = '';
         };
     }, [isDragging, handleMouseMove, handleMouseUp]);
+
+    useEffect(() => {
+        if (voiceEnabled && isSupported) {
+            dispatch(setEnabled(true));
+        }
+    }, [dispatch, isSupported, voiceEnabled]);
+
+    useEffect(() => {
+        const handleKeyDown = (event) => {
+            if (!(event.altKey && event.code === 'Space')) return;
+            const target = event.target;
+            const isTyping = target instanceof HTMLElement
+                && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+            if (isTyping) return;
+            event.preventDefault();
+
+            if (!voiceEnabled) {
+                dispatch(setEnabled(true));
+            }
+
+            if (isListening) {
+                stopConversation();
+            } else {
+                startConversation();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [dispatch, isListening, startConversation, stopConversation, voiceEnabled]);
 
     return (
         <div className="flex flex-col h-screen w-full bg-transparent text-[var(--text-primary)]">

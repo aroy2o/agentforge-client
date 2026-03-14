@@ -17,10 +17,10 @@ const logsSlice = createSlice({
             state.logs.push(action.payload);
         },
         updateLog(state, action) {
-            const { id, content } = action.payload;
+            const { id, ...updates } = action.payload;
             const index = state.logs.findIndex(l => l.id === id);
             if (index !== -1) {
-                state.logs[index] = { ...state.logs[index], content };
+                state.logs[index] = { ...state.logs[index], ...updates };
             }
         },
         clearLogs(state) {

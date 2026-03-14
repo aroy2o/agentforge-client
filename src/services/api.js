@@ -142,24 +142,25 @@ export const extractTodos = async (content) => {
     return response.data.todos;
 };
 
-export const speak = async (text) => {
-    const { default: store } = await import('../store');
-    const language = store.getState().language.selectedLanguage || 'en';
-
-    const response = await api.post('/api/voice/speak', { text, language }, {
-        responseType: 'arraybuffer',
-        validateStatus: (status) => status < 500
-    });
-
-    if (response.status === 204) return null;
-    if (response.data && response.data.byteLength === 0) return null;
-
-    return {
-        data: response.data,
-        contentType: response.headers['content-type'] || 'audio/mpeg',
-        engine: response.headers['x-voice-engine'] || 'unknown'
-    };
-};
+// REMOVED — replaced with browser Web Speech API.
+// export const speak = async (text) => {
+//     const { default: store } = await import('../store');
+//     const language = store.getState().language.selectedLanguage || 'en';
+//
+//     const response = await api.post('/api/voice/speak', { text, language }, {
+//         responseType: 'arraybuffer',
+//         validateStatus: (status) => status < 500
+//     });
+//
+//     if (response.status === 204) return null;
+//     if (response.data && response.data.byteLength === 0) return null;
+//
+//     return {
+//         data: response.data,
+//         contentType: response.headers['content-type'] || 'audio/mpeg',
+//         engine: response.headers['x-voice-engine'] || 'unknown'
+//     };
+// };
 
 export const translate = async (text, targetLanguage) => {
     const response = await api.post('/api/tools/translate', { text, targetLanguage });
@@ -173,6 +174,11 @@ export const getSupportedLanguages = async () => {
 
 export const parseVoiceCommand = async (transcript, conversationHistory = []) => {
     const response = await api.post('/api/voice/command', { transcript, conversationHistory });
+    return response.data;
+};
+
+export const askVoiceAssistant = async ({ message, context, conversationHistory = [] }) => {
+    const response = await api.post('/api/voice/assistant', { message, context, conversationHistory });
     return response.data;
 };
 
@@ -249,6 +255,76 @@ export const deleteTask = async (taskId) => {
     return response.data;
 };
 
+export const getSchedules = async () => {
+    const response = await api.get('/api/user/schedules');
+    return response.data.schedules || [];
+};
+
+export const createSchedule = async (payload) => {
+    const response = await api.post('/api/tools/scheduler', payload);
+    return response.data;
+};
+
+export const parseScheduleTime = async (input) => {
+    const response = await api.post('/api/tools/parse-time', { input });
+    return response.data;
+};
+
+export const reframePrompt = async ({ task, pipeline, attachments }) => {
+    const response = await api.post('/api/tools/reframe-prompt', { task, pipeline, attachments });
+    return response.data;
+};
+
+export const deleteSchedule = async (id) => {
+    const response = await api.delete(`/api/user/schedules/${id}`);
+    return response.data;
+};
+
+export const pauseSchedule = async (id, isActive) => {
+    const response = await api.patch(`/api/user/schedules/${id}`, { isActive });
+    return response.data.schedule;
+};
+
+export const runScheduleNow = async (id) => {
+    const response = await api.post(`/api/user/schedules/${id}/run-now`);
+    return response.data;
+};
+
+export const getScheduleHistory = async (id) => {
+    const response = await api.get(`/api/user/schedules/${id}/history`);
+    return response.data.history || [];
+};
+
+export const parsePdf = async ({ fileUrl, base64 }) => {
+    const response = await api.post('/api/tools/pdf-reader', { fileUrl, base64 });
+    return response.data;
+};
+
+export const analyzeImage = async ({ imageUrl, base64, imageName, width, height, filesizeKb }) => {
+    const response = await api.post('/api/tools/image-analyzer', { imageUrl, base64, imageName, width, height, filesizeKb });
+    return response.data;
+};
+
+export const runCode = async ({ code, language }) => {
+    const response = await api.post('/api/tools/code-runner', { code, language });
+    return response.data;
+};
+
+export const queryDataset = async ({ query, data }) => {
+    const response = await api.post('/api/tools/db-query', { query, data });
+    return response.data;
+};
+
+export const convertCurrency = async ({ amount, from, to }) => {
+    const response = await api.post('/api/tools/currency-converter', { amount, from, to });
+    return response.data;
+};
+
+export const generateChart = async ({ data, chartType, title, xKey, yKey }) => {
+    const response = await api.post('/api/tools/chart-generator', { data, chartType, title, xKey, yKey });
+    return response.data;
+};
+
 export const getChatSessions = async () => {
     const response = await api.get('/api/chat');
     return response.data.sessions;
@@ -276,6 +352,76 @@ export const updateChatTitle = async (sessionId, title) => {
 
 export const sendEmail = async ({ to, subject, body }) => {
     const response = await api.post('/api/tools/send-email', { to, subject, body });
+    return response.data;
+};
+
+export const getGoogleAuthUrl = async () => {
+    const response = await api.get('/api/integrations/google/auth');
+    return response.data.url;
+};
+
+export const getGoogleStatus = async () => {
+    const response = await api.get('/api/integrations/google/status');
+    return response.data;
+};
+
+export const createCalendarEvents = async (todos) => {
+    const response = await api.post('/api/integrations/google/create-events', { todos });
+    return response.data;
+};
+
+export const disconnectGoogle = async () => {
+    const response = await api.delete('/api/integrations/google/disconnect');
+    return response.data;
+};
+
+export const getCalendarEvents = async () => {
+    const response = await api.get('/api/integrations/google/events');
+    return response.data.events || [];
+};
+
+export const getUserPreferences = async () => {
+    const response = await api.get('/api/user/preferences');
+    return response.data;
+};
+
+export const saveUserPreferences = async (preferences) => {
+    const response = await api.put('/api/user/preferences', preferences);
+    return response.data.preferences;
+};
+
+export const saveNotificationPreferences = async (notifications) => {
+    const response = await api.put('/api/user/preferences/notifications', notifications);
+    return response.data.notifications;
+};
+
+export const sendNotificationTest = async (channel, payload = {}) => {
+    const response = await api.post('/api/notifications/test', { channel, ...payload });
+    return response.data;
+};
+
+export const changePassword = async ({ currentPassword, newPassword }) => {
+    const response = await api.put('/api/auth/change-password', { currentPassword, newPassword });
+    return response.data;
+};
+
+export const clearAgentMemory = async () => {
+    const response = await api.delete('/api/user/memory');
+    return response.data;
+};
+
+export const resetAgentsToDefault = async () => {
+    const response = await api.post('/api/user/agents/reset');
+    return response.data;
+};
+
+export const syncAllAgents = async () => {
+    const response = await api.post('/api/user/agents/sync-all');
+    return response.data;
+};
+
+export const deleteAccount = async () => {
+    const response = await api.delete('/api/user/account');
     return response.data;
 };
 

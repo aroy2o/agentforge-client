@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { TOOLS } from '../../constants/tools';
 import AgentGrid from '../agents/AgentGrid';
 import Translate from './Translate';
-import { X, ChevronRight, Menu, MessageSquare, Plus, Clock } from 'lucide-react';
+import { X, ChevronRight, Menu, MessageSquare, Plus, Clock, Settings, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }) {
@@ -55,6 +55,20 @@ export default function Sidebar({ onClose, isCollapsed, onToggleCollapse }) {
                                     title="Create New Agent"
                                 >
                                     <Plus size={18} />
+                                </button>
+                                <button
+                                    onClick={() => navigate('/settings')}
+                                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-accent-cyan hover:bg-accent-cyan/10 transition-colors cursor-pointer"
+                                    title="Settings"
+                                >
+                                    <Settings size={16} />
+                                </button>
+                                <button
+                                    onClick={() => navigate('/memory')}
+                                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-accent-cyan hover:bg-accent-cyan/10 transition-colors cursor-pointer"
+                                    title="Memory Intelligence"
+                                >
+                                    <Brain size={16} />
                                 </button>
                             </>
                         )}

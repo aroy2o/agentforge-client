@@ -17,8 +17,8 @@ export function buildSystemPrompt(agent, stepNumber, totalSteps) {
     return `## Identity
 You are ${agent.name}, ${agent.role}.
 
-## Personality & Approach
-${agent.personality}
+## Operating Profile
+${agent.personality || ''}
 
 ## Available Tools
 ${toolsList || '  - (No tools assigned)'}

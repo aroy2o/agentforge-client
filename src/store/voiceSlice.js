@@ -1,75 +1,96 @@
 import { createSlice } from '@reduxjs/toolkit';
 
 const initialState = {
-    voiceEnabled: false,
+    isEnabled: false,
     isListening: false,
     isSpeaking: false,
+    isThinking: false,
     isMuted: false,
-    isProcessingCommand: false,
+    continuousMode: true,
     lastTranscript: '',
-    lastCommandResult: null,       // stores the last parsed command object
-    conversationHistory: [],       // stores last 10 { role, content } exchanges
-    continuousMode: true,          // whether to auto-restart mic after ARIA speaks
-    activeVoiceEngine: 'none',     // 'elevenlabs', 'browser', or 'none'
+    lastUserSpeech: '',
+    lastARIASpeech: '',
+    followUpSuggestion: null,
+    conversationHistory: [],
+    voiceRate: 1.0,
+    voicePitch: 1.0,
+    selectedLanguage: 'en-US',
+    isSupported: true,
+    hasOnboarded: false,
 };
 
 const voiceSlice = createSlice({
     name: 'voice',
     initialState,
     reducers: {
-        setVoiceEnabled: (state, action) => {
-            state.voiceEnabled = action.payload;
+        setEnabled: (state, action) => {
+            state.isEnabled = action.payload;
         },
-        setIsListening: (state, action) => {
+        setListening: (state, action) => {
             state.isListening = action.payload;
         },
-        setIsSpeaking: (state, action) => {
+        setSpeaking: (state, action) => {
             state.isSpeaking = action.payload;
         },
-        setIsMuted: (state, action) => {
+        setThinking: (state, action) => {
+            state.isThinking = action.payload;
+        },
+        setMuted: (state, action) => {
             state.isMuted = action.payload;
-        },
-        setIsProcessingCommand: (state, action) => {
-            state.isProcessingCommand = action.payload;
-        },
-        setLastTranscript: (state, action) => {
-            state.lastTranscript = action.payload;
-        },
-        setLastCommandResult: (state, action) => {
-            state.lastCommandResult = action.payload;
-        },
-        addToConversationHistory: (state, action) => {
-            // action.payload = { role: 'user'|'assistant', content: string }
-            state.conversationHistory.push(action.payload);
-            // Keep only the last 10 exchanges
-            if (state.conversationHistory.length > 10) {
-                state.conversationHistory = state.conversationHistory.slice(-10);
-            }
-        },
-        clearConversationHistory: (state) => {
-            state.conversationHistory = [];
         },
         setContinuousMode: (state, action) => {
             state.continuousMode = action.payload;
         },
-        setActiveVoiceEngine: (state, action) => {
-            state.activeVoiceEngine = action.payload;
+        setLastTranscript: (state, action) => {
+            state.lastTranscript = action.payload;
+        },
+        setLastUserSpeech: (state, action) => {
+            state.lastUserSpeech = action.payload;
+        },
+        setLastARIASpeech: (state, action) => {
+            state.lastARIASpeech = action.payload;
+        },
+        setFollowUpSuggestion: (state, action) => {
+            state.followUpSuggestion = action.payload;
+        },
+        setConversationHistory: (state, action) => {
+            state.conversationHistory = Array.isArray(action.payload) ? action.payload.slice(-10) : [];
+        },
+        setHasOnboarded: (state, action) => {
+            state.hasOnboarded = action.payload;
+        },
+        setVoiceRate: (state, action) => {
+            state.voiceRate = action.payload;
+        },
+        setVoicePitch: (state, action) => {
+            state.voicePitch = action.payload;
+        },
+        setSelectedLanguage: (state, action) => {
+            state.selectedLanguage = action.payload;
+        },
+        setSupported: (state, action) => {
+            state.isSupported = action.payload;
         },
     },
 });
 
 export const {
-    setVoiceEnabled,
-    setIsListening,
-    setIsSpeaking,
-    setIsMuted,
-    setIsProcessingCommand,
-    setLastTranscript,
-    setLastCommandResult,
-    addToConversationHistory,
-    clearConversationHistory,
+    setEnabled,
+    setListening,
+    setSpeaking,
+    setThinking,
+    setMuted,
     setContinuousMode,
-    setActiveVoiceEngine,
+    setLastTranscript,
+    setLastUserSpeech,
+    setLastARIASpeech,
+    setFollowUpSuggestion,
+    setConversationHistory,
+    setHasOnboarded,
+    setVoiceRate,
+    setVoicePitch,
+    setSelectedLanguage,
+    setSupported,
 } = voiceSlice.actions;
 
 export default voiceSlice.reducer;

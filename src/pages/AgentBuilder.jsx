@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAppDispatch, useAppSelector } from '../store';
@@ -8,6 +8,7 @@ import AgentCard from '../components/agents/AgentCard';
 import { TOOLS } from '../constants/tools';
 import Translate from '../components/layout/Translate';
 import { generateAgentPrompt } from '../services/api';
+import { registerVoicePageHandlers } from '../utils/voicePageHandlers';
 
 const AGENT_COLORS = [
   '#00d4ff',
@@ -43,6 +44,19 @@ export default function AgentBuilder() {
   const [category, setCategory] = useState(AGENT_CATEGORIES[0]);
 
   const [errors, setErrors] = useState({ name: '', description: '', role: '', tools: '' });
+
+  useEffect(() => {
+    const unregister = registerVoicePageHandlers({
+      openForm: () => {
+        if (step !== 1) setStep(1);
+      },
+    }, () => ({
+      agentRoster: existingAgents.map((a) => a.name).filter(Boolean),
+      builderStep: step,
+    }));
+
+    return unregister;
+  }, [existingAgents, step]);
 
   const isNameUnique = (testName) => {
     return !existingAgents.some((a) => a.name.toLowerCase() === testName.trim().toLowerCase());
@@ -164,7 +178,7 @@ export default function AgentBuilder() {
                 <Translate>AI Agent Builder</Translate>
               </h1>
               <p className="text-xs text-slate-400 dark:text-slate-500 font-mono">
-                <Translate>Describe your need. The Forge will craft the perfect AI personality.</Translate>
+                <Translate>Describe your need. The Forge will craft the perfect AI operating profile.</Translate>
               </p>
             </div>
 
@@ -190,7 +204,7 @@ export default function AgentBuilder() {
                 <div className="animate-in fade-in slide-in-from-left-4 duration-500">
                   <h2 className="text-sm font-bold uppercase tracking-widest text-slate-200 mb-6 flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan"></span>
-                    Step 1: Describe Your Agent
+                    <Translate>Step 1: Describe Your Agent</Translate>
                   </h2>
 
                   <div className="flex flex-col gap-6">
@@ -244,7 +258,7 @@ export default function AgentBuilder() {
                         className={`${inputClass} ${isGenerating ? 'opacity-50' : ''}`}
                         placeholder="Add up to 3 example tasks separated by commas..."
                       />
-                      <p className="text-[10px] text-slate-500 mt-1">This helps the AI understand the agent better.</p>
+                      <p className="text-[10px] text-slate-500 mt-1"><Translate>This helps the AI understand the agent better.</Translate></p>
                     </div>
 
                     {/* Action Buttons */}
@@ -260,11 +274,11 @@ export default function AgentBuilder() {
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
-                            <span>ARIA is crafting your agent's personality...</span>
+                          <span><Translate>ARIA is crafting your agent instructions...</Translate></span>
                           </>
                         ) : (
                           <>
-                            <span>Generate Agent</span>
+                            <span><Translate>Generate Agent</Translate></span>
                             <span className="text-accent-cyan/80">✨</span>
                           </>
                         )}
@@ -280,13 +294,13 @@ export default function AgentBuilder() {
                   <h2 className="text-sm font-bold uppercase tracking-widest text-slate-200 mb-6 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan"></span>
-                      Step 2: Review & Customize
+                      <Translate>Step 2: Review & Customize</Translate>
                     </div>
                     <button
                       onClick={() => setStep(1)}
                       className="text-xs text-slate-400 hover:text-white transition-colors uppercase font-mono tracking-widest border border-subtle px-3 py-1 rounded-md cursor-pointer"
                     >
-                      Back
+                      <Translate>Back</Translate>
                     </button>
                   </h2>
 
@@ -324,13 +338,13 @@ export default function AgentBuilder() {
                       </div>
                     </div>
 
-                    {/* AI Generated Personality */}
+                    {/* AI Generated Instructions */}
                     <div>
                       <div className="flex justify-between items-end mb-2">
                         <label className="block text-xs uppercase tracking-widest text-slate-400">
                           <Translate>Your Agent's Instructions</Translate>
                         </label>
-                        <span className="text-[10px] text-accent-cyan/80 bg-accent-cyan/10 px-2 py-0.5 rounded-sm uppercase tracking-widest">Feel free to edit</span>
+                        <span className="text-[10px] text-accent-cyan/80 bg-accent-cyan/10 px-2 py-0.5 rounded-sm uppercase tracking-widest"><Translate>Feel free to edit</Translate></span>
                       </div>
                       <textarea
                         value={personality}
@@ -425,7 +439,7 @@ export default function AgentBuilder() {
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                           </svg>
                         ) : (
-                          <span>Regenerate</span>
+                          <span><Translate>Regenerate</Translate></span>
                         )}
                       </button>
 
@@ -454,7 +468,7 @@ export default function AgentBuilder() {
                 />
               </div>
               <p className="text-[10px] text-slate-400 mt-4 italic leading-relaxed text-center px-4">
-                This agent will be immediately available in your roster and pipeline builder.
+                <Translate>This agent will be immediately available in your roster and pipeline builder.</Translate>
               </p>
             </div>
 

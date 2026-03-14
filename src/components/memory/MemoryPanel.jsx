@@ -1,21 +1,62 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useAppSelector } from '../../store';
+import { useAppDispatch, useAppSelector } from '../../store';
 import MemoryCard from './MemoryCard';
+import MemoryInsights from './MemoryInsights';
 import Translate from '../layout/Translate';
+import { useTranslatedText } from '../../hooks/useTranslatedText';
 import { Brain, Search, Sparkles } from 'lucide-react';
 import apiClient from '../../services/api';
+import { setCompletedTasks } from '../../store/taskSlice';
 
 export default function MemoryPanel() {
+    const dispatch = useAppDispatch();
     const agents = useAppSelector((state) => state.agents.agents);
+    const completedTasks = useAppSelector((state) => state.task.completedTasks);
+    const taskGoal = useAppSelector((state) => state.task.taskGoal);
+    const pipeline = useAppSelector((state) => state.pipeline.pipeline);
+    const toolAttachments = useAppSelector((state) => state.task.toolAttachments);
+    const isRunning = useAppSelector((state) => state.task.isRunning);
+    const user = useAppSelector((state) => state.auth.user);
+    const userPreferences = useAppSelector((state) => state.auth.userPreferences);
+    const notifications = useAppSelector((state) => state.auth.notifications);
+    const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
+    const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+    const searchPlaceholder = useTranslatedText('Search semantic memories...');
+    const searchingText = useTranslatedText('Searching vectors...');
+    const noMatchesText = useTranslatedText('No semantic matches found.');
 
     // Filter agents that only actually have memories
     const agentsWithMemories = useMemo(() =>
         agents.filter(a => a.memory && a.memory.length > 0),
         [agents]
     );
+
+    useEffect(() => {
+        if (!isAuthenticated || completedTasks.length > 0 || isLoadingTasks) return;
+
+        let cancelled = false;
+        const loadTasks = async () => {
+            setIsLoadingTasks(true);
+            try {
+                const res = await apiClient.get('/api/user/tasks?limit=30');
+                if (!cancelled) {
+                    dispatch(setCompletedTasks(res.data?.tasks || []));
+                }
+            } catch (err) {
+                console.error('Failed to hydrate completed tasks for memory panel', err);
+            } finally {
+                if (!cancelled) setIsLoadingTasks(false);
+            }
+        };
+
+        loadTasks();
+        return () => {
+            cancelled = true;
+        };
+    }, [completedTasks.length, dispatch, isAuthenticated, isLoadingTasks]);
 
     // Search effect
     useEffect(() => {
@@ -58,19 +99,19 @@ export default function MemoryPanel() {
     }, [searchQuery, agentsWithMemories]);
 
     return (
-        <div className="flex flex-col h-full bg-transparent">
+        <div className="flex flex-col h-full bg-transparent" data-memory-panel>
             {/* Header */}
             <div className="shrink-0 h-[48px] flex items-center justify-between px-5 border-b border-[var(--border-subtle)] bg-[var(--bg-panel-header)]">
                 <span className="section-label m-0">
-                    <Translate>AGENT MEMORY BANKS</Translate>
+                    <Translate>MEMORY INTELLIGENCE</Translate>
                 </span>
 
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[var(--accent-purple)] bg-opacity-10 border border-[var(--accent-purple)] border-opacity-30">
+                {/* <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[var(--accent-purple)] bg-opacity-10 border border-[var(--accent-purple)] border-opacity-30">
                     <Sparkles className="w-3 h-3 text-[var(--accent-purple)]" />
                     <span className="text-10 font-bold uppercase tracking-wider text-[var(--accent-purple)]">
                         RAG Active
                     </span>
-                </div>
+                </div> */}
             </div>
 
             {/* Search Bar */}
@@ -79,7 +120,7 @@ export default function MemoryPanel() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                     <input
                         type="text"
-                        placeholder="Search semantic memories..."
+                        placeholder={searchPlaceholder}
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="w-full h-[36px] bg-[var(--bg-input)] border border-[var(--border-default)] rounded-lg pl-9 pr-3 text-13 text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:border-accent-purple focus:ring-1 focus:ring-accent-purple transition-all outline-none"
@@ -97,7 +138,7 @@ export default function MemoryPanel() {
                     searchResults.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-12 gap-3 h-full opacity-60">
                             <span className="text-13 text-[var(--text-muted)] italic">
-                                {isSearching ? "Searching vectors..." : "No semantic matches found."}
+                                {isSearching ? searchingText : noMatchesText}
                             </span>
                         </div>
                     ) : (
@@ -126,6 +167,29 @@ export default function MemoryPanel() {
                     )
                 ) : (
                     <>
+                        <MemoryInsights
+                            agents={agents}
+                            completedTasks={completedTasks}
+                            taskGoal={taskGoal}
+                            pipeline={pipeline}
+                            toolAttachments={toolAttachments}
+                            isRunning={isRunning}
+                            user={user}
+                            userPreferences={userPreferences}
+                            notifications={notifications}
+                        />
+
+                        <div className="flex items-center justify-between pt-2">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                                <Translate>Agent Memory Banks</Translate>
+                            </div>
+                            {isLoadingTasks && (
+                                <div className="text-[11px] text-[var(--text-muted)] animate-pulse">
+                                    <Translate>Loading task history...</Translate>
+                                </div>
+                            )}
+                        </div>
+
                         {agentsWithMemories.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-12 gap-3 h-full">
                                 <Brain className="w-8 h-8 text-[var(--border-strong)] opacity-50" />

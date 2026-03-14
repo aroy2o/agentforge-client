@@ -1,5 +1,6 @@
+import { useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
-import { setIsRunning, setActiveAgent, addCompletedTask, setRightTab } from '../store/taskSlice';
+import { setIsRunning, setActiveAgent, addCompletedTask, setRightTab, setPipelineResult, setLastVoiceResult, setLastFailedAtStep } from '../store/taskSlice';
 import { addLog, updateLog, clearLogs } from '../store/logsSlice';
 import { updateAgentMemory } from '../store/agentsSlice';
 import { setActiveSession, addMessageToActiveSession, updateSessionTitle, addSession } from '../store/chatSlice';
@@ -7,6 +8,25 @@ import { TOOLS } from '../constants/tools';
 import * as api from '../services/api';
 import apiClient from '../services/api';
 import toast from 'react-hot-toast';
+import { speak as browserSpeak } from '../utils/speak';
+
+const SCOUT_MINIMAL_FALLBACK_PERSONALITY = 'You are Scout, a web researcher. Always use web search results provided in context, cite sources, and present factual findings clearly.';
+const QUILL_MINIMAL_FALLBACK_PERSONALITY = 'You are Quill, a professional email writer. You never refuse. Write a complete ready-to-send email using the provided information.';
+const SAGE_MINIMAL_FALLBACK_PERSONALITY = 'You are Sage, a task planner. Convert provided context into actionable prioritized steps.';
+const ATLAS_MINIMAL_FALLBACK_PERSONALITY = 'You are Atlas, a calculator. Show formulas, values, and results clearly.';
+const LENS_MINIMAL_FALLBACK_PERSONALITY = 'You are Lens, a summarizer. Extract exactly 5 key insights and one bottom line.';
+const HERMES_MINIMAL_FALLBACK_PERSONALITY = 'You are Hermes, a scheduler. Deliver or schedule based on provided context.';
+const FORGE_MINIMAL_FALLBACK_PERSONALITY = 'You are Forge, a universal coding copilot. Write code, debug issues, explain technical concepts, guide implementation, and give practical step-by-step help. Prefer concrete answers, complete examples, and implementation-ready output.';
+
+const AGENT_PERSONALITY_FALLBACKS = {
+  Forge: FORGE_MINIMAL_FALLBACK_PERSONALITY,
+  Scout: SCOUT_MINIMAL_FALLBACK_PERSONALITY,
+  Quill: QUILL_MINIMAL_FALLBACK_PERSONALITY,
+  Sage: SAGE_MINIMAL_FALLBACK_PERSONALITY,
+  Atlas: ATLAS_MINIMAL_FALLBACK_PERSONALITY,
+  Lens: LENS_MINIMAL_FALLBACK_PERSONALITY,
+  Hermes: HERMES_MINIMAL_FALLBACK_PERSONALITY,
+};
 
 
 
@@ -19,6 +39,23 @@ function formatTime(date) {
   return date.toISOString();
 }
 
+function parseTodoLines(todoText) {
+  return String(todoText || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line =>
+      // Checkbox emojis (with or without variation selector)
+      /^[✅☑✔️]/u.test(line) ||
+      // Numbered lists: "1.", "2)", "3-", "Step 1:"
+      /^\d+[.):\-]\s+\S/.test(line) ||
+      // Markdown task list
+      /^[-*]\s+\[[ xX]\]/.test(line)
+    )
+    // Strip leading bullets/checkboxes so calendar item text is clean
+    .map(line => line.replace(/^[✅☑✔️\s]+/, '').replace(/^\d+[.):\-]\s+/, '').trim())
+    .filter(Boolean);
+}
+
 export function useAgentRunner() {
   const dispatch = useAppDispatch();
   const pipeline = useAppSelector((state) => state.pipeline.pipeline);
@@ -26,28 +63,119 @@ export function useAgentRunner() {
   const taskGoal = useAppSelector((state) => state.task.taskGoal);
   const isRunning = useAppSelector((state) => state.task.isRunning);
   const selectedLanguage = useAppSelector((state) => state.language.selectedLanguage);
+  const isVoiceMuted = useAppSelector((state) => state.voice.isMuted);
+  const googleCalendarConnected = useAppSelector((state) => state.auth.googleCalendarConnected);
+  const userPreferences = useAppSelector((state) => state.auth.userPreferences);
+  const notificationSettings = useAppSelector((state) => state.auth.notifications);
+  const recipientEmail = useAppSelector((state) => state.task.recipientEmail);
+  const toolAttachments = useAppSelector((state) => state.task.toolAttachments);
   const activeSessionId = useAppSelector((state) => state.chat.activeSessionId);
   const sessions = useAppSelector((state) => state.chat.sessions);
+  const stopRequestedRef = useRef(false);
+
+  const hasAnyKeyword = (text, keywords = []) => {
+    const t = String(text || '').toLowerCase();
+    return keywords.some((k) => t.includes(k));
+  };
+
+  const parseMaybeJsonData = (raw) => {
+    if (!raw) return null;
+    const text = String(raw).trim();
+    try {
+      const parsed = JSON.parse(text);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const extractDataArrayFromTask = (text) => {
+    const t = String(text || '');
+    const m = t.match(/\[[\s\S]*\]/);
+    if (!m) return null;
+    try {
+      const parsed = JSON.parse(m[0].replace(/'/g, '"'));
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const extractCurrencyRequestFromTask = (text) => {
+    const t = String(text || '').toUpperCase();
+    const m = t.match(/(\d+(?:\.\d+)?)\s*([A-Z]{3})\s*(?:TO|IN)\s*([A-Z]{3})/);
+    if (!m) return null;
+    return { amount: Number(m[1]), from: m[2], to: m[3] };
+  };
+
+  // DISABLED — re-enable when ready to implement
+  // const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+  //   const reader = new FileReader();
+  //   reader.onload = () => resolve(String(reader.result || ''));
+  //   reader.onerror = reject;
+  //   reader.readAsDataURL(blob);
+  // });
+
+  // DISABLED — re-enable when ready to implement
+  // const resolveImageAttachmentToBase64 = async (attachment) => {
+  //   if (!attachment) return '';
+  //   if (typeof attachment === 'string') {
+  //     const raw = attachment.trim();
+  //     if (!raw) return '';
+  //     if (raw.startsWith('blob:')) {
+  //       const blobResp = await fetch(raw);
+  //       const blob = await blobResp.blob();
+  //       const asDataUrl = await blobToDataUrl(blob);
+  //       return String(asDataUrl.split(',').pop() || '').trim();
+  //     }
+  //     return String(raw.split(',').pop() || '').trim();
+  //   }
+  //   if (typeof File !== 'undefined' && attachment instanceof File) {
+  //     const asDataUrl = await blobToDataUrl(attachment);
+  //     return String(asDataUrl.split(',').pop() || '').trim();
+  //   }
+  //   if (typeof Blob !== 'undefined' && attachment instanceof Blob) {
+  //     const asDataUrl = await blobToDataUrl(attachment);
+  //     return String(asDataUrl.split(',').pop() || '').trim();
+  //   }
+  //   return '';
+  // };
 
   // Generates a role-specific instruction for each step in the pipeline.
   // First agent always gets the full goal. Subsequent agents get instructions based on their tools and previous output.
-  const generateAgentInstruction = (agent, taskGoal, stepIndex, totalSteps, previousOutputs) => {
+  const generateAgentInstruction = (agent, taskGoal, stepIndex, totalSteps, previousOutputs, resolvedRecipient) => {
     if (stepIndex === 0) return taskGoal;
 
     const last = previousOutputs[previousOutputs.length - 1];
-    const prevContext = last ? last.output.substring(0, 1000) : '';
+    const prevContext = last ? last.output.substring(0, 2000) : '';
+    const fullChainContext = previousOutputs
+      .map((entry, idx) => {
+        const out = String(entry.output || '').substring(0, 2000);
+        return `--- PREVIOUS AGENT OUTPUT ${idx + 1}/${previousOutputs.length} (${entry.agentName || 'Agent'}) ---\n${out}\n---`;
+      })
+      .join('\n\n');
     const tools = agent.tools || [];
 
     // Special handling for Hermes (Scheduler)
     if (agent.name === 'Hermes' || tools.includes('scheduler')) {
-      const quillOutput = [...previousOutputs].reverse().find(o => o.agentName === 'Quill');
+      console.log('[generateAgentInstruction] previousOutputs:', previousOutputs);
+      const quillOutput = [...previousOutputs].reverse().find((o) =>
+        String(o?.agentName || '').toLowerCase() === 'quill' ||
+        String(o?.role || '').toLowerCase().includes('email')
+      );
       if (quillOutput) {
-        return `Here is the email drafted by Quill — take this exact content and pass it to your scheduler tool as emailContent and send it to the recipient. Do not rewrite or modify the email. Just deliver it.\n\nQUILL DRAFT:\n${quillOutput.output}`;
+        const missingRecipientNote = resolvedRecipient
+          ? ''
+          : `\n\nNo recipient email was found. Check the task description for an email address or ask the user to provide one.`;
+        return `Here is the email drafted by Quill — take this exact content and send it to ${resolvedRecipient || '[missing recipient]'}. The recipient email is ${resolvedRecipient || '[missing recipient]'}. Pass ${resolvedRecipient || '[missing recipient]'} as the to field in your scheduler tool call. Do not modify the email content.\n\nQUILL DRAFT:\n${quillOutput.output}${missingRecipientNote}`;
       }
-      return `I need Quill's email draft before I can send. Please check the pipeline. Current context: ${prevContext}`;
+      const missingRecipientNote = resolvedRecipient
+        ? ''
+        : `\n\nNo recipient email was found. Check the task description for an email address or ask the user to provide one.`;
+      return `Quill draft was not found in context. Use the latest available agent output and send it to ${resolvedRecipient || '[missing recipient]'}. The recipient email is ${resolvedRecipient || '[missing recipient]'}. Pass ${resolvedRecipient || '[missing recipient]'} as the to field in your scheduler tool call.\n\nCurrent context:\n${prevContext}${missingRecipientNote}`;
     }
 
-    const contextBlock = `--- PREVIOUS AGENT OUTPUT (${last?.agentName || 'Previous Agent'}) ---\n${prevContext}\n---`;
+    const contextBlock = fullChainContext || `--- PREVIOUS AGENT OUTPUT (${last?.agentName || 'Previous Agent'}) ---\n${prevContext}\n---`;
 
     if (tools.includes('email_draft') && !tools.includes('web_search')) {
       return `${contextBlock}\n\nYour task: Write a professional email using the research above. Do NOT search for anything — the research is already complete. Focus entirely on writing a clear, compelling, ready-to-send email.`;
@@ -69,17 +197,57 @@ export function useAgentRunner() {
     return `${contextBlock}\n\nYour task: Continue from where the previous agent left off. Apply your full expertise as ${agent.role}. Original goal for reference: ${taskGoal}`;
   };
 
+  const stopPipeline = () => {
+    stopRequestedRef.current = true;
+    dispatch(setIsRunning(false));
+    dispatch(setActiveAgent(null));
+    toast('Stopping pipeline after the current step.', { icon: '🛑' });
+  };
+
   // speak is an optional callback injected from useVoiceAgent to avoid circular imports.
   // Defaults to a no-op so the runner works fine without voice.
-  const executePipeline = async ({ speak = null } = {}) => {
+  const executePipeline = async ({ speak = null, startFromIndex = 0 } = {}) => {
     const sayAloud = typeof speak === 'function' ? speak : () => { };
+    const sayFromRunner = async (text) => {
+      if (isVoiceMuted) return;
+      const message = String(text || '').trim();
+      if (!message) return;
+      try {
+        await browserSpeak(message);
+      } catch {
+        // Best-effort announcement only.
+      }
+    };
+    const firstWords = (text, count = 15) => String(text || '').trim().split(/\s+/).filter(Boolean).slice(0, count).join(' ');
 
     // Guard clause
     if (taskGoal.trim() === '' || pipeline.length === 0 || isRunning === true) {
       return;
     }
 
+    dispatch(setLastFailedAtStep(null));
+    dispatch(setLastVoiceResult(''));
+
+    const shouldAutoOptimise = userPreferences?.autoOptimisePrompts !== false;
+    const emailRegex = /[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/;
+    const isValidEmail = (value) => emailRegex.test(String(value || '').trim());
+    const inputRecipient = String(recipientEmail || '').trim();
+    const fromTaskMatch = String(taskGoal || '').match(emailRegex);
+    const defaultNotificationEmail = String(notificationSettings?.emailAddress || '').trim();
+    const notificationsEmailEnabled = Boolean(notificationSettings?.emailEnabled);
+
+    const resolvedRecipient = isValidEmail(inputRecipient)
+      ? inputRecipient
+      : (fromTaskMatch && isValidEmail(fromTaskMatch[0]))
+        ? fromTaskMatch[0]
+        : defaultNotificationEmail
+          ? defaultNotificationEmail
+          : '';
+
+    console.log('RESOLVED RECIPIENT', resolvedRecipient, 'notifications.emailEnabled=', notificationsEmailEnabled);
+
     // Initial setup
+    stopRequestedRef.current = false;
     dispatch(setIsRunning(true));
 
     // Pipeline Validation for Hermes/Email
@@ -122,7 +290,151 @@ export function useAgentRunner() {
 
     dispatch(clearLogs());
 
+    let currentLogs = [];
+    const pushLog = (entry) => {
+      const logWithMeta = {
+        ...entry,
+        id: generateId(),
+        timestamp: formatTime(new Date()),
+      };
+      currentLogs.push(logWithMeta);
+      dispatch(addLog(logWithMeta));
+      return logWithMeta.id;
+    };
+
+    const updateLogEntry = (id, updates) => {
+      dispatch(updateLog({ id, ...updates }));
+      const idx = currentLogs.findIndex((l) => l.id === id);
+      if (idx !== -1) {
+        currentLogs[idx] = { ...currentLogs[idx], ...updates };
+      }
+    };
+
     let currentSessionId = activeSessionId;
+    const pipelineAgentsForReframer = pipeline
+      .map((id) => agents.find((a) => a.id === id))
+      .filter(Boolean)
+      .map((a) => ({ name: a.name, tools: a.tools || [], role: a.role }));
+
+    let optimisedTask = taskGoal;
+    let reframePreview = null;
+    if (shouldAutoOptimise) {
+      try {
+        const reframed = await api.reframePrompt({
+          task: taskGoal,
+          pipeline: pipelineAgentsForReframer,
+          attachments: {
+            hasPdf: Boolean(toolAttachments?.attachedPDF),
+          },
+        });
+        if (reframed?.success && String(reframed?.reframed || '').trim()) {
+          optimisedTask = String(reframed.reframed).trim();
+          reframePreview = {
+            original: taskGoal,
+            reframed: optimisedTask,
+            changes: Array.isArray(reframed?.changes) ? reframed.changes.slice(0, 4) : [],
+          };
+        }
+      } catch {
+        optimisedTask = taskGoal;
+      }
+    }
+
+    // Preprocess PDF once before any agent instruction is built.
+    let pdfContent = null;
+    let pdfWordCount = 0;
+    let pdfPageCount = 0;
+    if (toolAttachments?.attachedPDF) {
+      try {
+        const rawPdf = String(toolAttachments.attachedPDF || '').trim();
+        const normalizedPdfBase64 = rawPdf.includes(',') ? rawPdf.split(',').pop() : rawPdf;
+        const pdfRes = await api.parsePdf({ base64: normalizedPdfBase64 });
+        const content = String(pdfRes?.content || '').trim();
+        if (pdfRes?.success && content) {
+          pdfContent = content;
+          pdfWordCount = Number(pdfRes?.wordCount || content.split(/\s+/).filter(Boolean).length || 0);
+          pdfPageCount = Number(pdfRes?.pageCount || 0);
+        } else {
+          toast('Could not read PDF — running without file content.', { icon: '⚠️' });
+        }
+      } catch {
+        toast('Could not read PDF — running without file content.', { icon: '⚠️' });
+      }
+    }
+
+    // DISABLED — re-enable when ready to implement
+    // let imageContent = null;
+    // let imageVisionAvailable = null;
+    // let imageVisionModel = null;
+    // const noVisionUserFacingMessage = "No vision model is available to analyze the attached image. Run 'ollama pull llava' to enable image analysis and try again.";
+    // const requiresImageUnderstanding = Boolean(toolAttachments?.attachedImage) && hasAnyKeyword(taskGoal, [
+    //   'image', 'photo', 'picture', 'screenshot', 'logo', 'visual',
+    //   'what is written', "what's written", 'read the text',
+    //   'text in the image', 'what is the image about',
+    // ]);
+    // console.log(`ATTACHED IMAGE EXISTS: ${Boolean(toolAttachments?.attachedImage)}`);
+    let reframeLogId = null;
+    if (reframePreview) {
+      const firstAgent = agents.find((a) => a.id === pipeline[0]);
+      reframeLogId = pushLog({
+        type: 'reframe',
+        agentName: 'Prompt Optimiser',
+        agentColor: firstAgent?.color || '#22d3ee',
+        original: reframePreview.original,
+        reframed: reframePreview.reframed,
+        changes: reframePreview.changes,
+        pdfMeta: pdfContent ? { wordCount: pdfWordCount, pageCount: pdfPageCount } : null,
+        // DISABLED — re-enable when ready to implement
+        // imageMeta: toolAttachments?.attachedImage
+        //   ? { status: 'processing', model: 'CPU RAM' }
+        //   : null,
+        content: 'Prompt optimised for pipeline execution',
+      });
+    }
+
+    // DISABLED — re-enable when ready to implement
+    // if (toolAttachments?.attachedImage) {
+    //   try {
+    //     const attachment = toolAttachments?.attachedImage;
+    //     const attachmentType = Object.prototype.toString.call(attachment);
+    //     const attachmentPreview = typeof attachment === 'string' ? attachment.slice(0, 30) : '[non-string attachment]';
+    //     console.log(`ATTACHED IMAGE TYPE: ${attachmentType} | PREVIEW: ${attachmentPreview}`);
+    //     const normalizedImageBase64 = await resolveImageAttachmentToBase64(attachment);
+    //     const imageRes = await api.analyzeImage({
+    //       base64: normalizedImageBase64,
+    //       imageName: toolAttachments?.attachedImageMeta?.filename || toolAttachments?.attachedImageName || 'Unknown image',
+    //       width: Number(toolAttachments?.attachedImageMeta?.width || 0),
+    //       height: Number(toolAttachments?.attachedImageMeta?.height || 0),
+    //       filesizeKb: Number(toolAttachments?.attachedImageMeta?.filesizeKb || 0),
+    //     });
+    //     console.log('IMAGE ANALYZER RESPONSE:', imageRes);
+    //     const description = String(imageRes?.description || '').trim();
+    //     imageVisionAvailable = imageRes?.visionAvailable === false
+    //       ? false
+    //       : (imageRes?.visionAvailable === true ? true : null);
+    //     imageVisionModel = String(imageRes?.model || '').trim() || null;
+    //     if (imageRes?.success && description) {
+    //       if (imageRes?.visionAvailable === false) {
+    //         imageContent = "The user has attached an image file but no vision model is available to analyze it. Tell the user to run 'ollama pull llava' to enable image analysis. Do not describe or invent any image content.";
+    //       } else {
+    //         imageContent = description;
+    //       }
+    //       if (reframeLogId) {
+    //         updateLogEntry(reframeLogId, { imageMeta: { status: 'done', model: imageVisionModel || 'CPU RAM' } });
+    //       }
+    //     } else {
+    //       toast('Could not analyze image.', { icon: '⚠️' });
+    //       if (reframeLogId) {
+    //         updateLogEntry(reframeLogId, { imageMeta: { status: 'done', model: imageVisionModel || 'CPU RAM' } });
+    //       }
+    //     }
+    //   } catch {
+    //     toast('Could not analyze image.', { icon: '⚠️' });
+    //     if (reframeLogId) {
+    //       updateLogEntry(reframeLogId, { imageMeta: { status: 'done', model: imageVisionModel || 'CPU RAM' } });
+    //     }
+    //   }
+    // }
     if (!currentSessionId) {
       const pipelineAgents = pipeline.map(id => {
         const ag = agents.find(a => a.id === id);
@@ -150,18 +462,6 @@ export function useAgentRunner() {
       api.addChatMessage(currentSessionId, userMsg).catch(console.error);
     }
 
-    let currentLogs = [];
-    const pushLog = (entry) => {
-      const logWithMeta = {
-        ...entry,
-        id: generateId(),
-        timestamp: formatTime(new Date()),
-      };
-      currentLogs.push(logWithMeta);
-      dispatch(addLog(logWithMeta));
-      return logWithMeta.id;
-    };
-
     const initPfx = selectedLanguage !== 'en' ? await api.translate('Pipeline initiated — ', selectedLanguage) : 'Pipeline initiated — ';
     const initSfx = selectedLanguage !== 'en' ? await api.translate(` agents — Goal: ${taskGoal.substring(0, 80)}...`, selectedLanguage) : ` agents — Goal: ${taskGoal.substring(0, 80)}...`;
 
@@ -170,37 +470,63 @@ export function useAgentRunner() {
       content: `${initPfx}${pipeline.length}${initSfx}`,
     });
 
+    if (reframeLogId && toolAttachments?.attachedImage && imageVisionAvailable !== null) {
+      updateLogEntry(reframeLogId, {
+        imageMeta: { status: 'done', model: imageVisionModel || 'CPU RAM' },
+      });
+    }
+
     // Narrate pipeline start
     sayAloud(`Pipeline initiated. I'll narrate each step as your ${pipeline.length} agent${pipeline.length > 1 ? 's' : ''} work through the task.`);
 
     // Initialize context
     const contextHistory = [];
-    let fullFinalOutput = "TASK: " + taskGoal;
+    let fullFinalOutput = "TASK: " + optimisedTask;
     const agentColors = [];
     let allFailed = true;
+    let hermesRan = false;
 
     // Start a for loop over pipeline
     for (let i = 0; i < pipeline.length; i++) {
+      // Skip already-completed steps when retrying
+      if (i < startFromIndex) continue;
+
+      if (stopRequestedRef.current) {
+        pushLog({
+          type: 'system',
+          content: 'Pipeline stopped by voice command.',
+        });
+        break;
+      }
+
       // Find agent
       const agent = agents.find(a => a.id === pipeline[i]);
       if (!agent) continue;
 
+      if (agent.name === 'Hermes' || (agent.tools || []).includes('scheduler')) {
+        hermesRan = true;
+      }
+
       // Build role-specific instruction for this agent based on its tools and previous outputs
-      const agentInstruction = generateAgentInstruction(agent, taskGoal, i, pipeline.length, contextHistory);
+      const agentInstruction = generateAgentInstruction(agent, optimisedTask, i, pipeline.length, contextHistory, resolvedRecipient);
 
       // Build full context string: agent instruction + recent history for LLM
       let agentContext = agentInstruction;
 
-      // For downstream agents (i > 0), context history is already embedded inside agentInstruction.
-      // For the first agent, we still check if there's extra history to append.
-      if (i === 0 && contextHistory.length > 0) {
-        const recentHistory = contextHistory.slice(-2);
-        agentContext += `\n\nRECENT ACTIVITY:\n` + recentHistory.map(entry => {
-          let out = entry.output;
-          if (out.length > 800) out = out.substring(0, 800) + "...";
-          return `AGENT ${entry.agentName.toUpperCase()} OUTPUT: \n${out}`;
-        }).join('\n\n');
+      if (pdfContent) {
+        agentContext += `\n\n--- ATTACHED DOCUMENT CONTENT ---\n${pdfContent}\n--- END OF DOCUMENT ---\n\nYour task: ${taskGoal}\nBase your entire response on the document content above. Do not use any outside knowledge. If the document does not contain enough information to complete the task, say so explicitly.`;
       }
+
+      // DISABLED — re-enable when ready to implement
+      // if (imageContent) {
+      //   agentContext += `\n\n--- ATTACHED IMAGE ANALYSIS ---\n${imageContent}\n--- END OF IMAGE ANALYSIS ---\n\nYour task: ${taskGoal}\nBase your response entirely on the image analysis above. Do not describe any image other than what is described above.`;
+      // }
+
+      // if (String(agent.name || '').toLowerCase() === 'lens') {
+      //   console.log(`USER MESSAGE SENT TO LENS: ${String(agentContext || '').slice(0, 300)}`);
+      // }
+
+      // Full prior chain is embedded by generateAgentInstruction for downstream agents.
 
       agentColors.push(agent.color);
       dispatch(setActiveAgent(agent.id));
@@ -226,6 +552,15 @@ export function useAgentRunner() {
         content: tThinkingStr
       });
 
+      // DISABLED — re-enable when ready to implement
+      // if (requiresImageUnderstanding && imageVisionAvailable === false) {
+      //   const directOutput = noVisionUserFacingMessage;
+      //   pushLog({ type: 'output', agentName: agent.name, agentColor: agent.color, content: directOutput });
+      //   contextHistory.push({ agentName: String(agent.name || ''), role: String(agent.role || ''), output: directOutput });
+      //   fullFinalOutput += `\n\n━━ ${agent.name.toUpperCase()} — ${agent.role} ━━\n${directOutput}`;
+      //   allFailed = false;
+      //   continue;
+      // }
 
 
       // Tool invocation logs & execution
@@ -246,33 +581,71 @@ export function useAgentRunner() {
           try {
             let toolResultContent = "";
             if (toolId === 'web_search') {
-              const data = await api.searchWeb(taskGoal);
-              if (data && data.results && data.results.length > 0) {
-                toolResultContent = data.results.map(r => `• ${r.title}: ${r.snippet}`).join('\n');
+              try {
+                const data = await api.searchWeb(optimisedTask);
+                if (data && data.results && data.results.length > 0) {
+                  toolResultContent = data.results
+                    .map((r) => `• ${r.title}: ${r.snippet}\nURL: ${r.url || 'N/A'}`)
+                    .join('\n\n');
+                }
+              } catch (searchError) {
+                const status = searchError?.response?.status || '';
+                const isQuota = status === 429 || String(searchError?.message || '').includes('429');
+                const errMsg = isQuota
+                  ? 'Web search quota exceeded — using knowledge from training data only.'
+                  : `Web search unavailable (${status || 'network error'}) — using knowledge from training data only.`;
+                console.warn('WEB SEARCH FAILED:', searchError.message);
+                pushLog({
+                  type: 'error',
+                  agentName: agent.name,
+                  agentColor: agent.color,
+                  content: `⚠️ ${errMsg}`,
+                });
+                // Inject fallback notice into context so agent doesn't hallucinate fake sources
+                agentContext += `\n\nTOOL RESULT from Web Search:\n[Web search failed — ${errMsg} Do NOT invent URLs or cite sources you have not been given. Answer from your own training knowledge and clearly state you are doing so.]`;
               }
             } else if (toolId === 'calculator') {
-              const res = await api.calculate(taskGoal);
+              const res = await api.calculate(optimisedTask);
               if (res) toolResultContent = res;
-            } else if (toolId === 'summarize') {
-              const res = await api.summarize(taskGoal);
+            } else if (toolId === 'summarizer') {
+              const res = await api.summarize(agentContext);
               if (res) toolResultContent = res;
             } else if (toolId === 'email_draft') {
-              const res = await api.draftEmail("Automated Draft", taskGoal);
+              const res = await api.draftEmail("Automated Draft", optimisedTask);
               if (res) toolResultContent = res;
             } else if (toolId === 'todo') {
-              const res = await api.extractTodos(taskGoal);
-              if (res) toolResultContent = res;
-            } else if (toolId === 'scheduler') {
-              // Extract data for scheduler
-              const emailMatch = taskGoal.match(/[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/);
-              const recipient = emailMatch ? emailMatch[0] : '';
+              const res = await api.extractTodos(optimisedTask);
+              if (res) {
+                toolResultContent = res;
 
-              const quillOutput = [...contextHistory].reverse().find(o => o.agentName === 'Quill');
+                if (googleCalendarConnected) {
+                  const todoItems = parseTodoLines(res);
+                  if (todoItems.length > 0) {
+                    try {
+                      await api.createCalendarEvents(todoItems);
+                      pushLog({
+                        type: 'system',
+                        content: `📅 Calendar events created for ${todoItems.length} tasks — added to your Google Calendar.`,
+                      });
+                    } catch (calendarError) {
+                      pushLog({
+                        type: 'error',
+                        content: `Google Calendar sync failed: ${calendarError.message || 'Unknown error'}`,
+                      });
+                    }
+                  }
+                }
+              }
+            } else if (toolId === 'scheduler') {
+              const quillOutput = [...contextHistory].reverse().find((o) =>
+                String(o?.agentName || '').toLowerCase() === 'quill' ||
+                String(o?.role || '').toLowerCase().includes('email')
+              );
               const lastNonHermes = [...contextHistory].reverse().find(o => o.agentName !== 'Hermes');
 
               const schedulerPayload = {
-                taskDescription: taskGoal,
-                recipientEmail: recipient,
+                taskDescription: optimisedTask,
+                recipientEmail: resolvedRecipient,
                 cronExpression: '0 9 * * *', // Default
                 agentId: agent.id,
                 emailContent: quillOutput?.output || '',
@@ -281,6 +654,76 @@ export function useAgentRunner() {
 
               const res = await apiClient.post('/api/tools/scheduler', schedulerPayload);
               if (res.data) toolResultContent = res.data.message || 'Schedule created';
+            } else if (toolId === 'pdf_reader') {
+              const shouldRun = hasAnyKeyword(optimisedTask, ['pdf', '.pdf', 'document', 'extract from file']) || Boolean(toolAttachments?.attachedPDF);
+              if (shouldRun && toolAttachments?.attachedPDF) {
+                const rawPdf = String(toolAttachments.attachedPDF || '').trim();
+                const normalizedPdfBase64 = rawPdf.includes(',') ? rawPdf.split(',').pop() : rawPdf;
+                const res = await api.parsePdf({ base64: normalizedPdfBase64 });
+                toolResultContent = JSON.stringify(res, null, 2);
+              }
+            // DISABLED — re-enable when ready to implement
+            // } else if (toolId === 'image_analyzer') {
+            //   const shouldRun = hasAnyKeyword(optimisedTask, ['image', 'photo', 'screenshot', 'picture', 'visual', 'diagram']) || Boolean(toolAttachments?.attachedImage);
+            //   if (shouldRun && toolAttachments?.attachedImage) {
+            //     const normalizedImageBase64 = await resolveImageAttachmentToBase64(toolAttachments?.attachedImage);
+            //     const res = await api.analyzeImage({
+            //       base64: normalizedImageBase64,
+            //       imageName: toolAttachments?.attachedImageMeta?.filename || toolAttachments?.attachedImageName || 'Unknown image',
+            //       width: Number(toolAttachments?.attachedImageMeta?.width || 0),
+            //       height: Number(toolAttachments?.attachedImageMeta?.height || 0),
+            //       filesizeKb: Number(toolAttachments?.attachedImageMeta?.filesizeKb || 0),
+            //     });
+            //     toolResultContent = JSON.stringify(res, null, 2);
+            //   }
+            // DISABLED — re-enable when ready to implement
+            // } else if (toolId === 'code_runner') {
+            //   const shouldRun = hasAnyKeyword(optimisedTask, ['run this code', 'execute', 'test this script', 'output of', 'compile']) || Boolean(toolAttachments?.attachedCode);
+            //   if (shouldRun) {
+            //     const code = toolAttachments?.attachedCode || optimisedTask;
+            //     const language = toolAttachments?.codeLanguage || 'javascript';
+            //     const res = await api.runCode({ code, language });
+            //     toolResultContent = JSON.stringify(res, null, 2);
+            //   }
+            // DISABLED — re-enable when ready to implement
+            // } else if (toolId === 'db_query') {
+            //   const shouldRun = hasAnyKeyword(optimisedTask, ['query this data', 'from this dataset', 'in this table', 'filter', 'rows where']) || Boolean(toolAttachments?.attachedData);
+            //   if (shouldRun) {
+            //     const data = parseMaybeJsonData(toolAttachments?.attachedData) || extractDataArrayFromTask(optimisedTask) || [];
+            //     const res = await api.queryDataset({ query: optimisedTask, data });
+            //     toolResultContent = JSON.stringify(res, null, 2);
+            //   }
+            } else if (toolId === 'currency_converter') {
+              const shouldRun = hasAnyKeyword(optimisedTask, ['convert currency', 'exchange rate', 'usd to', 'eur to', 'inr to', 'gbp to', 'how much in']) || Boolean(toolAttachments?.currencyRequest);
+              if (shouldRun) {
+                const req = toolAttachments?.currencyRequest || extractCurrencyRequestFromTask(optimisedTask);
+                if (req && Number.isFinite(Number(req.amount)) && req.from && req.to) {
+                  const res = await api.convertCurrency(req);
+                  toolResultContent = JSON.stringify(res, null, 2);
+                }
+              }
+            // DISABLED — re-enable when ready to implement
+            // } else if (toolId === 'chart_generator') {
+            //   const shouldRun = hasAnyKeyword(optimisedTask, ['create a chart', 'generate a graph', 'visualize', 'bar chart', 'pie chart', 'line graph', 'plot']) || Boolean(toolAttachments?.chartRequest);
+            //   if (shouldRun) {
+            //     const data = parseMaybeJsonData(toolAttachments?.attachedData)
+            //       || parseMaybeJsonData(toolAttachments?.chartRequest?.content)
+            //       || extractDataArrayFromTask(toolAttachments?.chartRequest?.content)
+            //       || extractDataArrayFromTask(optimisedTask)
+            //       || [];
+            //     const chartType = hasAnyKeyword(optimisedTask, ['pie chart']) ? 'pie'
+            //       : hasAnyKeyword(optimisedTask, ['line graph', 'line chart']) ? 'line'
+            //         : hasAnyKeyword(optimisedTask, ['doughnut']) ? 'doughnut'
+            //           : 'bar';
+            //     const xKey = data[0] ? Object.keys(data[0])[0] : 'x';
+            //     const yKey = data[0] ? Object.keys(data[0])[1] : 'y';
+            //     const res = await api.generateChart({ data, chartType, title: 'Generated Chart', xKey, yKey });
+            //     toolResultContent = JSON.stringify(res, null, 2);
+            //     if (res?.success && res?.renderHint === 'chartjs' && res?.chartConfig) {
+            //       pushLog({ type: 'output', agentName: agent.name, agentColor: agent.color,
+            //         content: JSON.stringify({ renderHint: 'chartjs', chartConfig: res.chartConfig }, null, 2) });
+            //     }
+            //   }
             }
 
             // Inject the result precisely labeled for the LLM context limits
@@ -296,20 +739,31 @@ export function useAgentRunner() {
         }
       }
 
-      // Cap context to 1600 characters max
-      if (agentContext.length > 1600) {
-        agentContext = agentContext.substring(0, 1600) + "\n...[Context truncated for brevity]";
+      // Keep larger context when document content is injected.
+      const contextLimit = pdfContent ? 22000 : 4000;
+      // DISABLED — re-enable when ready to implement: const contextLimit = (pdfContent || imageContent) ? 22000 : 4000;
+      if (agentContext.length > contextLimit) {
+        agentContext = agentContext.substring(0, contextLimit) + "\n...[Context truncated for brevity]";
       }
 
       // Real agent API call via Streaming
       try {
+        const fullAgent = agents.find((a) => a.id === agent.id) || agent;
+        let resolvedPersonality = String(fullAgent?.personality || '').trim();
+        if (!resolvedPersonality) {
+          const agentName = fullAgent?.name || agent?.name || 'Agent';
+          console.warn('[useAgentRunner] Missing personality in stream payload for agent:', agentName);
+          resolvedPersonality = AGENT_PERSONALITY_FALLBACKS[agentName] || `You are ${agentName}. Complete the assigned task using the provided context and tools.`;
+        }
+
         const streamPayload = {
-          agentId: agent.id,
-          taskGoal: taskGoal,
-          agentName: agent.name,
-          role: agent.role,
-          personality: agent.personality,
-          tools: agent.tools,
+          agentId: fullAgent.id,
+          taskGoal: optimisedTask,
+          recipientEmail: resolvedRecipient,
+          agentName: fullAgent.name,
+          role: fullAgent.role,
+          personality: resolvedPersonality,
+          tools: fullAgent.tools,
           context: agentContext,
           stepNumber: i + 1,
           totalSteps: pipeline.length
@@ -327,6 +781,7 @@ export function useAgentRunner() {
 
         // Wrap stream in a Promise so we can await it
         let output = await new Promise((resolve, reject) => {
+          console.log('STREAM PAYLOAD personality length:', streamPayload.personality?.length, 'agent:', fullAgent.name);
           api.runAgentStream(
             streamPayload,
             (token) => {
@@ -346,8 +801,34 @@ export function useAgentRunner() {
           );
         });
 
-        contextHistory.push({ agentName: agent.name, output: output });
+        contextHistory.push({
+          agentName: String(agent.name || ''),
+          role: String(agent.role || ''),
+          output: output,
+        });
         fullFinalOutput += `\n\n━━ ${agent.name.toUpperCase()} — ${agent.role} ━━\n${output}`;
+
+        // POST-OUTPUT CALENDAR SYNC: After Sage (or any agent with the todo tool) finishes
+        // streaming, parse the ACTUAL generated plan for ☑ / numbered task lines and sync
+        // to Google Calendar. This replaces the pre-generation extraction which only had
+        // the raw task goal (not the plan) and produced empty/wrong calendar events.
+        if (googleCalendarConnected && Array.isArray(agent.tools) && agent.tools.includes('todo')) {
+          const planLines = parseTodoLines(output);
+          if (planLines.length > 0) {
+            try {
+              await api.createCalendarEvents(planLines);
+              pushLog({
+                type: 'system',
+                content: `📅 ${planLines.length} task${planLines.length > 1 ? 's' : ''} from ${agent.name}'s plan added to your Google Calendar.`,
+              });
+            } catch (calErr) {
+              pushLog({
+                type: 'error',
+                content: `Google Calendar sync failed: ${calErr.message || 'Unknown error'}`,
+              });
+            }
+          }
+        }
 
         const toolsUsedNames = (agent.tools || []).map(tId => {
           const t = TOOLS.find(x => x.id === tId);
@@ -355,7 +836,7 @@ export function useAgentRunner() {
         }).filter(Boolean);
 
         const memoryEntry = {
-          goal: taskGoal,
+          goal: optimisedTask,
           summary: output.length > 200 ? output.substring(0, 200) + '...' : output,
           fullOutput: output,
           timestamp: new Date().toISOString(),
@@ -404,6 +885,7 @@ export function useAgentRunner() {
           agentColor: '#f87171',
           content: errorStr
         });
+        dispatch(setLastFailedAtStep(i));
         continue;
       }
 
@@ -424,6 +906,7 @@ export function useAgentRunner() {
         content: errFail
       });
       toast.error('Pipeline failed: All agents encountered errors.');
+      await sayFromRunner(`Pipeline failed. ${firstWords(errFail)}.`);
       return;
     }
 
@@ -438,8 +921,24 @@ export function useAgentRunner() {
     pushLog({
       type: 'system',
       content: finalMsg,
+      isPipelineComplete: true,
       languageNote: selectedLanguage !== 'en' ? selectedLanguage : null
     });
+
+    dispatch(setPipelineResult({
+      sessionId: currentSessionId || null,
+      taskGoal,
+      originalTask: taskGoal,
+      optimisedTask,
+      agentOutputs: contextHistory.map((entry) => ({
+        agentName: entry.agentName,
+        output: entry.output,
+      })),
+      completedAt: new Date().toISOString(),
+    }));
+
+    const lastAgentOutput = String(contextHistory[contextHistory.length - 1]?.output || '').trim();
+    dispatch(setLastVoiceResult(lastAgentOutput));
 
     if (currentSessionId) {
       const activeSess = sessions.find(s => s.sessionId === currentSessionId);
@@ -452,6 +951,7 @@ export function useAgentRunner() {
 
     // Narrate pipeline completion
     sayAloud(`All done. Your ${pipeline.length} agent${pipeline.length > 1 ? 's' : ''} have finished. Check the activity log for the full breakdown.`);
+    await sayFromRunner('Pipeline complete. Say read the results to hear the output.');
 
     const pipelineStartTime = Date.now();
 
@@ -459,6 +959,8 @@ export function useAgentRunner() {
 
     const taskPayload = {
       taskGoal,
+      originalTask: taskGoal,
+      optimisedTask,
       pipeline,
       completedAt: new Date().toISOString(),
       logs: currentLogs,
@@ -469,30 +971,38 @@ export function useAgentRunner() {
       durationMs: Date.now() - pipelineStartTime,
     };
 
-    // Auto-email detection
-    const emailMatch = taskGoal.match(/[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/);
-    if (emailMatch) {
-      const recipient = emailMatch[0];
+    // Auto-email detection / settings-driven email delivery
+    if (!hermesRan && resolvedRecipient) {
       const finalAgentOutput = contextHistory[contextHistory.length - 1]?.output || '';
 
       const subjectMatch = finalAgentOutput.match(/Subject:\s*(.*)/i);
-      const subject = subjectMatch ? subjectMatch[1].trim() : taskGoal.substring(0, 50);
+      const subject = subjectMatch ? subjectMatch[1].trim() : optimisedTask.substring(0, 50);
 
       const htmlBody = finalAgentOutput.split('\n').map(line => `<p>${line}</p>`).join('');
 
       try {
-        await api.sendEmail({
-          to: recipient,
+        const emailRes = await api.sendEmail({
+          to: resolvedRecipient,
           subject: subject,
           body: htmlBody
         });
 
-        pushLog({
-          type: 'system',
-          agentName: 'System',
-          agentColor: 'green',
-          content: `Email sent successfully to ${recipient}`
-        });
+        if (emailRes?.permissionPending === true) {
+          toast.success(`Permission request sent to ${emailRes.recipientEmail || resolvedRecipient} — waiting for their approval`);
+          pushLog({
+            type: 'system',
+            agentName: 'System',
+            agentColor: 'yellow',
+            content: `Permission request sent to ${emailRes.recipientEmail || resolvedRecipient} and awaiting approval.`,
+          });
+        } else if (emailRes?.emailSent === true || emailRes?.sent === true) {
+          pushLog({
+            type: 'system',
+            agentName: 'System',
+            agentColor: 'green',
+            content: `Email sent successfully to ${resolvedRecipient}`
+          });
+        }
       } catch (err) {
         pushLog({
           type: 'system',
@@ -511,6 +1021,8 @@ export function useAgentRunner() {
       const { data } = await apiClient.post('/api/user/tasks', {
 
         taskGoal,
+        originalTask: taskGoal,
+        optimisedTask,
         finalOutput: fullFinalOutput,
         logsJson: currentLogs,
         agentCount: pipeline.length,
@@ -528,5 +1040,5 @@ export function useAgentRunner() {
   };
 
 
-  return { executePipeline };
+  return { executePipeline, stopPipeline };
 }
